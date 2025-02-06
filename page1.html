@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prosta wersja Dooma w przeglądarce</title>
+  <style>
+    body {
+      background-color: #1f1f1f;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: 'Arial', sans-serif;
+    }
+    canvas {
+      display: block;
+      border: 5px solid #ff6600;
+      box-shadow: 0px 0px 20px rgba(0, 0, 0, 0.7);
+    }
+    .score {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: #ff6600;
+      font-size: 24px;
+      font-weight: bold;
+      font-family: 'Verdana', sans-serif;
+    }
+    .health {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      color: white;
+      font-size: 24px;
+      font-weight: bold;
+      font-family: 'Verdana', sans-serif;
+    }
+    .title {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: white;
+      font-size: 40px;
+      font-weight: bold;
+      font-family: 'Verdana', sans-serif;
+    }
+    .hud {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+      font-family: 'Verdana', sans-serif;
+    }
+    .ammo {
+      color: yellow;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="640" height="480"></canvas>
+  <div class="title">Prosta wersja Dooma</div>
+  <div class="score">Wynik: <span id="score">0</span></div>
+  <div class="health">Zdrowie: <span id="health">100</span></div>
+  <div class="hud">Broń: <span id="weapon">Pistolet</span> | Ammo: <span id="ammo">30</span></div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const screenWidth = canvas.width;
+    const screenHeight = canvas.height;
+    const mapWidth = 8;
+    const mapHeight = 8;
+    
+    // Prosta mapa gry
+    const worldMap = [
+      [1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 0, 1, 1, 1, 0, 1, 1],
+      [1, 0, 0, 0, 1, 0, 0, 1],
+      [1, 1, 1, 0, 1, 1, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1]
+    ];
+
+    // Gracz
+    let playerX = 3.5;
+    let playerY = 3.5;
+    let playerAngle = 0;
+    let playerSpeed = 0.1;
+    let bullets = [];
+    let score = 0;
+    let health = 100;
+    let ammo = 30;
+    let weaponType = 'Pistolet'; // Aktualny typ broni
+
+    // Ustawienia kamery
+    const FOV = Math.PI / 3;
+    const MAX_DEPTH = 16;
+    const DELTA_ANGLE = Math.PI / 180 * 5;
+
+    // Przeciwnicy
+    let enemies = [
+      { x: 5, y: 5, health: 100, color: 'red', speed: 0.03 }
+    ];
+
+    // Dźwięki
+    const shootSound = new Audio('https://www.soundjay.com/button/beep-07.wav');
+    const hitSound = new Audio('https://www.soundjay.com/button/beep-04.wav');
+
+    // Funkcja rysująca mapę
+    function drawMap() {
+      for (let y = 0; y < mapHeight; y++) {
+        for (let x = 0; x < mapWidth; x++) {
+          if (worldMap[y][x] === 1) {
+            ctx.fillStyle = '#222'; // Kolor ścian
+            ctx.fillRect(x * 80, y * 60, 80, 60);
+          }
+        }
+      }
+    }
+
+    // Funkcja rysująca przeciwników
+    function drawEnemies() {
+      for (let enemy of enemies) {
+        let enemyDistance = Math.sqrt(Math.pow(playerX - enemy.x, 2) + Math.pow(playerY - enemy.y, 2));
+        if (enemyDistance < MAX_DEPTH) {
+          let enemyHeight = Math.min(screenHeight / (enemyDistance), screenHeight);
+          ctx.fillStyle = enemy.color;
+          ctx.fillRect(screenWidth / 2, (screenHeight - enemyHeight) / 2, 20, enemyHeight);
+        }
+      }
+    }
+
+    // Funkcja rysująca broń
+    function drawWeapon() {
+      ctx.fillStyle = '#ffcc00';
+      ctx.fillRect(screenWidth / 2 - 10, screenHeight - 50, 20, 10);
+      ctx.fillStyle = '#333';
+      ctx.fillRect(screenWidth / 2 - 2, screenHeight - 40, 4, 20);
+    }
+
+    // Funkcja rysująca tło
+    function drawBackground() {
+      const grd = ctx.createLinearGradient(0, 0, 0, screenHeight);
+      grd.addColorStop(0, '#000');   // Górna część - ciemna
+      grd.addColorStop(1, '#2a2a2a'); // Dolna część - szara
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, screenWidth, screenHeight);
+    }
+
+    // Funkcja rysująca scenę gry
+    function draw() {
+      drawBackground();
+      drawMap();
+
+      // Dla każdego promienia w widoku kamery
+      for (let x = 0; x < screenWidth; x++) {
+        let cameraX = 2 * x / screenWidth - 1; 
+        let rayAngle = playerAngle + FOV / 2 * cameraX;
+        
+        let distance = 0;
+        let hitWall = false;
+        
+        while (!hitWall && distance < MAX_DEPTH) {
+          distance += 0.1;
+          const rayX = playerX + Math.cos(rayAngle) * distance;
+          const rayY = playerY + Math.sin(rayAngle) * distance;
+
+          const mapX = Math.floor(rayX);
+          const mapY = Math.floor(rayY);
+          
+          if (mapX >= 0 && mapX < mapWidth && mapY >= 0 && mapY < mapHeight && worldMap[mapY][mapX] === 1) {
+            hitWall = true;
+          }
+        }
+        
+        const wallHeight = Math.min(screenHeight / (distance * Math.cos(rayAngle - playerAngle)), screenHeight);
+        const color = hitWall ? '#888' : '#ccc';
+        ctx.fillStyle = color;
+        ctx.fillRect(x, (screenHeight - wallHeight) / 2, 1, wallHeight);
+      }
+
+      drawEnemies();
+      drawWeapon();
+
+      // Wyświetlanie wyniku, zdrowia i amunicji
+      document.getElementById('score').innerText = score;
+      document.getElementById('health').innerText = health;
+      document.getElementById('ammo').innerText = ammo;
+      document.getElementById('weapon').innerText = weaponType;
+    }
+
+    // Funkcja do sterowania
+    function control() {
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowLeft') {
+          playerAngle -= DELTA_ANGLE;
+        } else if (e.key === 'ArrowRight') {
+          playerAngle += DELTA_ANGLE;
+        } else if (e.key === 'ArrowUp') {
+          playerX += Math.cos(playerAngle) * playerSpeed;
+          playerY += Math.sin(playerAngle) * playerSpeed;
+        } else if (e.key === 'ArrowDown') {
+          playerX -= Math.cos(playerAngle) * playerSpeed;
+          playerY -= Math.sin(playerAngle) * playerSpeed;
+        } else if (e.key === ' ' && ammo > 0) {
+          shoot();
+        } else if (e.key === '1') {
+          weaponType = 'Pistolet';
+        } else if (e.key === '2') {
+          weaponType = 'Shotgun';
+        }
+
+        // Zabezpieczenie przed wychodzeniem poza mapę
+        if (playerX < 0) playerX = 0;
+        if (playerX >= mapWidth) playerX = mapWidth - 1;
+        if (playerY < 0) playerY = 0;
+        if (playerY >= mapHeight) playerY = mapHeight - 1;
+      });
+    }
+
+    // Funkcja strzelania
+    function shoot() {
+      let bullet = {
+        x: playerX,
+        y: playerY,
+        angle: playerAngle,
+        speed: 0.5
+      };
+      bullets.push(bullet);
+      ammo--;
+      shootSound.play(); // Odtwarzanie dźwięku strzału
+    }
+
+    // Funkcja aktualizująca stan gry
+    function update() {
+      // Ruch pocisków
+      for (let bullet of bullets) {
+        bullet.x += Math.cos(bullet.angle) * bullet.speed;
+        bullet.y += Math.sin(bullet.angle) * bullet.speed;
+
+        for (let enemy of enemies) {
+          let distanceToEnemy = Math.sqrt(Math.pow(bullet.x - enemy.x, 2) + Math.pow(bullet.y - enemy.y, 2));
+          if (distanceToEnemy < 5) {
+            enemy.health -= 25;
+            bullet.x = -1;
+            bullet.y = -1;
+            score += 10;
+            hitSound.play(); // Odgrywanie dźwięku trafienia
+          }
+        }
+      }
+
+      bullets = bullets.filter(bullet => bullet.x >= 0 && bullet.y >= 0);
+      enemies = enemies.filter(enemy => enemy.health > 0);
+    }
+
+    // Funkcja do animacji przeciwników
+    function moveEnemies() {
+      for (let enemy of enemies) {
+        let angleToPlayer = Math.atan2(playerY - enemy.y, playerX - enemy.x);
+        enemy.x += Math.cos(angleToPlayer) * enemy.speed;
+        enemy.y += Math.sin(angleToPlayer) * enemy.speed;
+      }
+    }
+
+    // Pętla gry
+    function gameLoop() {
+      update();
+      moveEnemies();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Inicjalizacja gry
+    function init() {
+      control();
+      gameLoop();
+    }
+
+    init();
+  </script>
+  <script src="game.js"></script>
+</body>
+</html>
